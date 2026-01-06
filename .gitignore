@@ -1,0 +1,28 @@
+# Database
+*.db
+
+# Debug files
+debug_*.html
+debug_*.json
+
+# Crawled data
+*_products.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
