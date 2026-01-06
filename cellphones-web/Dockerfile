@@ -39,5 +39,5 @@ COPY . .
 # Expose port
 EXPOSE 10000
 
-# Run with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app"]
+# Run with gunicorn - increased timeout for crawling
+CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--timeout", "120", "--workers", "1", "--threads", "2", "app:app"]
