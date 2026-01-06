@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: gvn-product-crawler
+    runtime: docker
+    dockerfilePath: ./cellphones-web/Dockerfile
+    dockerContext: ./cellphones-web
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
