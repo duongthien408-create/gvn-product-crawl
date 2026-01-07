@@ -1,5 +1,6 @@
 """
 CellphoneS Product Crawler - Flask Backend
+Using requests + BeautifulSoup (lightweight, no browser needed)
 """
 
 import sys
@@ -11,14 +12,24 @@ from flask_cors import CORS
 import sqlite3
 import json
 import re
-import time
+import requests
+from bs4 import BeautifulSoup
 from datetime import datetime
-from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 CORS(app)
 
 DATABASE = 'products.db'
+
+# Headers to mimic browser request
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+}
 
 
 def get_db():
@@ -61,7 +72,7 @@ def init_db():
 
 
 def crawl_cellphones_product(url):
-    """Crawl thong tin san pham tu CellphoneS"""
+    """Crawl thong tin san pham tu CellphoneS using requests + BeautifulSoup"""
 
     if 'cellphones.com.vn' not in url:
         return {'error': 'URL khong phai tu CellphoneS'}
@@ -69,121 +80,119 @@ def crawl_cellphones_product(url):
     product = {}
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            )
-            page = context.new_page()
+        # Fetch page content
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        response.encoding = 'utf-8'
 
-            # Truy cap trang san pham
-            page.goto(url, wait_until='networkidle', timeout=60000)
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Lay ten san pham
-            name_el = page.query_selector('h1')
-            product['name'] = name_el.inner_text().strip() if name_el else ''
+        # Lay ten san pham
+        name_el = soup.select_one('h1')
+        product['name'] = name_el.get_text(strip=True) if name_el else ''
 
-            # Lay gia - thu nhieu selectors
-            price = 0
-            price_selectors = [
-                '.tpt---sale-price .sale-price span',
-                '.sale-price span',
-                '.product__price--show',
-                '.box-info__box-price .product__price--show',
-                '.product-price .sale-price',
-            ]
-            for sel in price_selectors:
-                price_el = page.query_selector(sel)
-                if price_el:
-                    price_text = price_el.inner_text()
-                    price = parse_price(price_text)
-                    if price > 0:
-                        break
-            product['price'] = price
+        # Lay gia - thu nhieu selectors
+        price = 0
+        price_selectors = [
+            '.tpt---sale-price .sale-price span',
+            '.sale-price span',
+            '.product__price--show',
+            '.box-info__box-price .product__price--show',
+            '.product-price .sale-price',
+            '[class*="product__price"]',
+            '.box-info__box-price',
+        ]
+        for sel in price_selectors:
+            price_el = soup.select_one(sel)
+            if price_el:
+                price_text = price_el.get_text()
+                price = parse_price(price_text)
+                if price > 0:
+                    break
+        product['price'] = price
 
-            # Lay gia goc
-            original_price = price
-            original_selectors = [
-                '.tpt---sale-price .base-price',
-                '.base-price',
-                '.product__price--through',
-                '.product-price del',
-            ]
-            for sel in original_selectors:
-                original_el = page.query_selector(sel)
-                if original_el:
-                    original_text = original_el.inner_text()
-                    original_price = parse_price(original_text)
-                    if original_price > 0:
-                        break
-            product['original_price'] = original_price if original_price > 0 else price
+        # Lay gia goc
+        original_price = price
+        original_selectors = [
+            '.tpt---sale-price .base-price',
+            '.base-price',
+            '.product__price--through',
+            '.product-price del',
+            'del[class*="price"]',
+        ]
+        for sel in original_selectors:
+            original_el = soup.select_one(sel)
+            if original_el:
+                original_text = original_el.get_text()
+                original_price = parse_price(original_text)
+                if original_price > 0:
+                    break
+        product['original_price'] = original_price if original_price > 0 else price
 
-            # Lay discount
-            discount = ''
-            if product['original_price'] > product['price'] and product['price'] > 0:
-                discount_percent = round((product['original_price'] - product['price']) / product['original_price'] * 100)
-                discount = f"-{discount_percent}%"
-            product['discount'] = discount
+        # Lay discount
+        discount = ''
+        if product['original_price'] > product['price'] and product['price'] > 0:
+            discount_percent = round((product['original_price'] - product['price']) / product['original_price'] * 100)
+            discount = f"-{discount_percent}%"
+        product['discount'] = discount
 
-            # Lay hinh anh - thu nhieu selectors
-            image = ''
-            img_selectors = [
-                '.box-gallery__detail img',
-                '.box-gallery__image img',
-                '.gallery-product img',
-                '.swiper-slide img[src*="cellphones"]',
-                '.product-image img',
-                'img[src*="media/catalog"]',
-            ]
-            for sel in img_selectors:
-                img_el = page.query_selector(sel)
-                if img_el:
-                    src = img_el.get_attribute('src') or img_el.get_attribute('data-src')
-                    # Bo qua youtube thumbnail
-                    if src and 'youtube' not in src and 'data:image' not in src:
-                        image = src
-                        break
-            product['image'] = image
+        # Lay hinh anh - thu nhieu selectors
+        image = ''
+        img_selectors = [
+            '.box-gallery__detail img',
+            '.box-gallery__image img',
+            '.gallery-product img',
+            '.swiper-slide img[src*="cellphones"]',
+            '.product-image img',
+            'img[src*="media/catalog"]',
+            '.box-gallery img',
+            'img[src*="cdn"]',
+        ]
+        for sel in img_selectors:
+            img_el = soup.select_one(sel)
+            if img_el:
+                src = img_el.get('src') or img_el.get('data-src')
+                # Bo qua youtube thumbnail va placeholders
+                if src and 'youtube' not in src and 'data:image' not in src and 'placeholder' not in src:
+                    image = src
+                    break
+        product['image'] = image
 
-            # Lay SKU tu URL
-            product['sku'] = url.split('/')[-1].replace('.html', '')
-            product['url'] = url
-            product['brand'] = extract_brand(product['name'])
-            product['in_stock'] = True
+        # Lay SKU tu URL
+        product['sku'] = url.split('/')[-1].replace('.html', '')
+        product['url'] = url
+        product['brand'] = extract_brand(product['name'])
+        product['in_stock'] = True
 
-            # Click nut "Xem tat ca" de lay full thong so
-            specs = {}
-            show_all_btn = page.query_selector('.button__show-modal-technical')
-            if show_all_btn:
-                show_all_btn.click()
-                time.sleep(1)
+        # Lay thong so ky thuat
+        specs = {}
 
-                # Lay thong so tu modal
-                modal = page.query_selector('.modal.is-active, [class*="modal"][class*="active"]')
-                if modal:
-                    rows = modal.query_selector_all('tr')
-                    for row in rows:
-                        cols = row.query_selector_all('td')
-                        if len(cols) >= 2:
-                            key = cols[0].inner_text().strip()
-                            value = cols[1].inner_text().strip()
-                            if key and value:
-                                specs[key] = value
+        # Try to get specs from technical content section
+        spec_rows = soup.select('.technical-content tr, .box-specifi tr, [class*="specification"] tr')
+        for row in spec_rows:
+            cols = row.select('td')
+            if len(cols) >= 2:
+                key = cols[0].get_text(strip=True)
+                value = cols[1].get_text(strip=True)
+                if key and value:
+                    specs[key] = value
 
-            # Neu khong lay duoc tu modal, lay tu trang chinh
-            if not specs:
-                rows = page.query_selector_all('.technical-content tr')
-                for row in rows:
-                    cols = row.query_selector_all('td')
-                    if len(cols) >= 2:
-                        key = cols[0].inner_text().strip()
-                        value = cols[1].inner_text().strip()
-                        if key and value:
-                            specs[key] = value
+        # Alternative: try definition list format
+        if not specs:
+            dt_elements = soup.select('.technical-content dt, .box-specifi dt')
+            dd_elements = soup.select('.technical-content dd, .box-specifi dd')
+            for dt, dd in zip(dt_elements, dd_elements):
+                key = dt.get_text(strip=True)
+                value = dd.get_text(strip=True)
+                if key and value:
+                    specs[key] = value
 
-            product['specs'] = specs
-            browser.close()
+        product['specs'] = specs
 
+    except requests.exceptions.Timeout:
+        return {'error': 'Timeout - trang web phan hoi qua cham'}
+    except requests.exceptions.RequestException as e:
+        return {'error': f'Loi ket noi: {str(e)}'}
     except Exception as e:
         return {'error': str(e)}
 
