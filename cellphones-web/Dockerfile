@@ -36,8 +36,9 @@ RUN playwright install chromium
 # Copy app files
 COPY . .
 
-# Expose port
-EXPOSE 10000
+# Expose port (Railway uses PORT env var)
+EXPOSE 8080
 
 # Run with gunicorn - increased timeout for crawling
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--timeout", "120", "--workers", "1", "--threads", "2", "app:app"]
+# Railway sets PORT env var automatically
+CMD gunicorn --bind 0.0.0.0:${PORT:-8080} --timeout 300 --workers 1 --threads 2 app:app
